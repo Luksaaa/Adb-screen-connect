@@ -87,43 +87,54 @@ def print_discovered_devices(discovered):
 def choose_device_addr():
     """Choose the device address to use for connection."""
     configured_addr = f"{DEVICE_IP}:{DEVICE_PORT}" if DEVICE_PORT else None
-    discovered = discover_wireless_devices()
+    while True:
+        os.system("cls")
+        print("Wireless debugging device scan starting...")
+        discovered = discover_wireless_devices()
 
-    print_discovered_devices(discovered)
+        print_discovered_devices(discovered)
 
-    if len(discovered) == 1:
-        device = discovered[0]
-        return device["addr"], f"mDNS discovery ({device['service']})"
+        if len(discovered) == 1:
+            device = discovered[0]
+            return device["addr"], f"mDNS discovery ({device['service']})"
 
-    if len(discovered) > 1:
-        print("Multiple devices are available. Choose which one to connect to.")
+        if len(discovered) > 1:
+            print("Multiple devices are available. Choose which one to connect to.")
+            print("Type a number or 'cls' to refresh the list.")
 
-        while True:
-            choice = input("Select a device number: ").strip()
-            if choice.isdigit():
-                selected_index = int(choice)
-                if 1 <= selected_index <= len(discovered):
-                    device = discovered[selected_index - 1]
-                    return device["addr"], f"mDNS selection ({device['service']})"
+            while True:
+                choice = input("Select a device number: ").strip().lower()
+                if choice == "cls":
+                    break
+                if choice.isdigit():
+                    selected_index = int(choice)
+                    if 1 <= selected_index <= len(discovered):
+                        device = discovered[selected_index - 1]
+                        return device["addr"], f"mDNS selection ({device['service']})"
 
-            print("Invalid selection. Enter one of the listed numbers.")
+                print("Invalid selection. Enter one of the listed numbers or 'cls'.")
 
-    if configured_addr:
-        print(f"Using configured fallback address: {configured_addr}")
-        return configured_addr, "configured fallback port"
+            continue
 
-    print(f"Using default fallback address: {DEVICE_IP}:5555")
-    return f"{DEVICE_IP}:5555", "default port fallback"
+        if configured_addr:
+            print(f"Using configured fallback address: {configured_addr}")
+            return configured_addr, "configured fallback port"
+
+        print(f"Using default fallback address: {DEVICE_IP}:5555")
+        return f"{DEVICE_IP}:5555", "default port fallback"
 
 
 def ask_to_retry():
     """Ask the user whether to run the wireless flow again."""
     while True:
         choice = input("Run again? (y/n): ").strip().lower()
+        if choice == "cls":
+            os.system("cls")
+            continue
         if choice in {"y", "n"}:
             return choice == "y"
 
-        print("Invalid input. Enter 'y' or 'n'.")
+        print("Invalid input. Enter 'y', 'n', or 'cls'.")
 
 
 def main():
