@@ -2,7 +2,6 @@ import subprocess
 import os
 import shutil
 import re
-import socket
 import time
 
 # Set your device IP address.
@@ -22,86 +21,13 @@ ADB_PATH = shutil.which("adb") or "adb"
 SCRCPY_PATH = shutil.which("scrcpy") or "scrcpy"
 
 
-def run_command(cmd):
+def run_command(cmd, timeout=None):
     """Run a command and return (code, output, error)."""
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    return result.returncode, result.stdout.strip(), result.stderr.strip()
-
-
-def resolve_device_name(ip_addr):
-    """Try to resolve a readable device name for an IP address."""
     try:
-        host_name, _, _ = socket.gethostbyaddr(ip_addr)
-        if host_name and host_name != ip_addr:
-            return host_name
-    except (socket.herror, socket.gaierror, OSError):
-        pass
-
-    return "Unknown"
-
-
-def list_wifi_network_devices():
-    """Return devices currently visible in the local ARP table."""
-    code, out, err = run_command(["arp", "-a"])
-    if code != 0:
-        return []
-
-    devices = []
-    current_interface = None
-
-    for line in out.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-
-        interface_match = re.match(r"^Interface:\s+((?:\d{1,3}\.){3}\d{1,3})", stripped)
-        if interface_match:
-            current_interface = interface_match.group(1)
-            continue
-
-        device_match = re.match(
-            r"^((?:\d{1,3}\.){3}\d{1,3})\s+([0-9a-fA-F-]+)\s+(dynamic|static)$",
-            stripped,
-        )
-        if not device_match:
-            continue
-
-        ip_addr, mac_addr, entry_type = device_match.groups()
-        devices.append(
-            {
-                "ip": ip_addr,
-                "name": resolve_device_name(ip_addr),
-                "mac": mac_addr,
-                "type": entry_type,
-                "interface": current_interface or "unknown",
-                "configured": ip_addr == DEVICE_IP,
-            }
-        )
-
-    devices.sort(key=lambda item: (not item["configured"], item["ip"]))
-    return devices
-
-
-def print_wifi_network_devices(devices):
-    """Print the devices currently visible on the local network."""
-    print()
-    print("Devices currently visible on the local Wi-Fi network")
-    print("-" * 50)
-
-    if not devices:
-        print("No devices were found in the local ARP table.")
-        print()
-        return
-
-    for index, device in enumerate(devices, start=1):
-        configured_note = "Yes" if device["configured"] else "No"
-        print(f"{index}. IP address : {device['ip']}")
-        print(f"   Device name : {device['name']}")
-        print(f"   MAC address : {device['mac']}")
-        print(f"   Entry type : {device['type']}")
-        print(f"   Interface : {device['interface']}")
-        print(f"   Matches configured IP : {configured_note}")
-        print()
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+    except subprocess.TimeoutExpired:
+        return 1, "", "Command timed out"
 
 
 def discover_wireless_devices():
@@ -109,15 +35,20 @@ def discover_wireless_devices():
     devices = {}
 
     for _ in range(5):
-        code, out, err = run_command([ADB_PATH, "mdns", "services"])
+        code, out, err = run_command([ADB_PATH, "mdns", "services"], timeout=5)
         if code == 0:
             for line in out.splitlines():
+                line_low = line.lower()
+                if "adb-tls-connect" not in line_low and "_adb-tls-connect._tcp" not in line_low:
+                    continue
+
                 match = re.search(r"\b((?:\d{1,3}\.){3}\d{1,3}):(\d+)\b", line)
                 if not match:
                     continue
 
                 addr = f"{match.group(1)}:{match.group(2)}"
-                service_name = line.split()[0] if line.split() else addr
+                parts = line.split()
+                service_name = parts[0] if parts else addr
                 devices[addr] = service_name
 
             if devices:
@@ -185,6 +116,16 @@ def choose_device_addr():
     return f"{DEVICE_IP}:5555", "default port fallback"
 
 
+def ask_to_retry():
+    """Ask the user whether to run the wireless flow again."""
+    while True:
+        choice = input("Run again? (y/n): ").strip().lower()
+        if choice in {"y", "n"}:
+            return choice == "y"
+
+        print("Invalid input. Enter 'y' or 'n'.")
+
+
 def main():
     # Check whether adb exists.
     if not shutil.which(ADB_PATH) and ADB_PATH == "adb":
@@ -198,70 +139,80 @@ def main():
         os.system("pause")
         return
 
-    print("Wireless debugging device scan starting...")
-    print_wifi_network_devices(list_wifi_network_devices())
-    device_addr, addr_source = choose_device_addr()
-    print("Connection details")
-    print("-" * 18)
-    print(f"Using device address {device_addr} ({addr_source}).")
+    while True:
+        device_addr, addr_source = choose_device_addr()
+        print("Connection details")
+        print("-" * 18)
+        print(f"Using device address {device_addr} ({addr_source}).")
 
-    print("Disconnecting all connections...")
-    code, out, err = run_command([ADB_PATH, "disconnect"])
-    # No special handling is needed here.
+        print("Disconnecting all connections...")
+        code, out, err = run_command([ADB_PATH, "disconnect"], timeout=5)
+        # No special handling is needed here.
 
-    print(f"Trying to connect to the device at {device_addr}...")
-    code, out, err = run_command([ADB_PATH, "connect", device_addr])
+        print(f"Trying to connect to the device at {device_addr}...")
+        code, out, err = run_command([ADB_PATH, "connect", device_addr], timeout=10)
 
-    # ADB reports success in multiple ways: "connected to ..." or "already connected to ...".
-    out_low = (out or "").lower()
-    err_low = (err or "").lower()
-    connected_ok = (
-        code == 0
-        and (
-            "connected to" in out_low
-            or "already connected to" in out_low
-            or "connected to" in err_low
-            or "already connected to" in err_low
+        # ADB reports success in multiple ways: "connected to ..." or "already connected to ...".
+        out_low = (out or "").lower()
+        err_low = (err or "").lower()
+        connected_ok = (
+            code == 0
+            and (
+                "connected to" in out_low
+                or "already connected to" in out_low
+                or "connected to" in err_low
+                or "already connected to" in err_low
+            )
         )
-    )
 
-    if not connected_ok:
-        print("Connection error:")
-        if out:
-            print("   Output:", out)
-        if err:
-            print("   Error:", err)
+        if not connected_ok:
+            print("Connection error:")
+            if out:
+                print("   Output:", out)
+            if err:
+                print("   Error:", err)
 
-        # A few common hints.
-        if "unable to connect" in out_low or "failed to connect" in out_low:
-            print("Check the IP/port (Wireless debugging on the phone) and make sure the PC and phone are on the same network.")
-        if "unauthorized" in out_low:
-            print("Confirm 'Allow USB/Wireless debugging' on the phone.")
-        if "10061" in out_low or "cannot connect" in out_low:
-            print("The wireless debugging port may have changed. Open Wireless debugging on the phone and run the script again.")
-        os.system("pause")
-        return
+            # A few common hints.
+            if "unable to connect" in out_low or "failed to connect" in out_low:
+                print("Check the IP/port (Wireless debugging on the phone) and make sure the PC and phone are on the same network.")
+            if "unauthorized" in out_low:
+                print("Confirm 'Allow USB/Wireless debugging' on the phone.")
+            if "10061" in out_low or "cannot connect" in out_low:
+                print("The wireless debugging port may have changed. Open Wireless debugging on the phone and run the script again.")
 
-    print(f"Connected device: {device_addr}")
+            if ask_to_retry():
+                continue
 
-    print("Starting scrcpy...")
-    code, out, err = run_command([SCRCPY_PATH, "-s", device_addr])
+            os.system("pause")
+            return
 
-    if code != 0:
-        print("Error while starting scrcpy:")
-        if out:
-            print("   Output:", out)
-        if err:
-            print("   Error:", err)
+        print(f"Connected device: {device_addr}")
 
-        # Common messages.
-        low = (out + "\n" + err).lower()
-        if "no devices/emulators found" in low:
-            print("ADB cannot see the device. Try 'adb devices' manually and check that it says 'device', not 'unauthorized' or 'offline'.")
-        elif "not recognized" in low or "no such file" in low:
-            print("scrcpy is not in PATH. Enter the full path in SCRCPY_PATH.")
-    else:
-        print("scrcpy finished.")
+        print("Starting scrcpy...")
+        code, out, err = run_command([SCRCPY_PATH, "-s", device_addr])
+
+        if code != 0:
+            print("Error while starting scrcpy:")
+            if out:
+                print("   Output:", out)
+            if err:
+                print("   Error:", err)
+
+            # Common messages.
+            low = (out + "\n" + err).lower()
+            if "no devices/emulators found" in low:
+                print("ADB cannot see the device. Try 'adb devices' manually and check that it says 'device', not 'unauthorized' or 'offline'.")
+            elif "not recognized" in low or "no such file" in low:
+                print("scrcpy is not in PATH. Enter the full path in SCRCPY_PATH.")
+
+            if ask_to_retry():
+                continue
+        else:
+            print("scrcpy finished.")
+            if ask_to_retry():
+                continue
+
+        break
 
     os.system("pause")   # Keep CMD open at the end.
 
