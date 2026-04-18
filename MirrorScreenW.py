@@ -2,6 +2,7 @@ import subprocess
 import os
 import shutil
 import re
+import socket
 import time
 
 # Set your device IP address.
@@ -25,6 +26,82 @@ def run_command(cmd):
     """Run a command and return (code, output, error)."""
     result = subprocess.run(cmd, capture_output=True, text=True)
     return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+def resolve_device_name(ip_addr):
+    """Try to resolve a readable device name for an IP address."""
+    try:
+        host_name, _, _ = socket.gethostbyaddr(ip_addr)
+        if host_name and host_name != ip_addr:
+            return host_name
+    except (socket.herror, socket.gaierror, OSError):
+        pass
+
+    return "Unknown"
+
+
+def list_wifi_network_devices():
+    """Return devices currently visible in the local ARP table."""
+    code, out, err = run_command(["arp", "-a"])
+    if code != 0:
+        return []
+
+    devices = []
+    current_interface = None
+
+    for line in out.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        interface_match = re.match(r"^Interface:\s+((?:\d{1,3}\.){3}\d{1,3})", stripped)
+        if interface_match:
+            current_interface = interface_match.group(1)
+            continue
+
+        device_match = re.match(
+            r"^((?:\d{1,3}\.){3}\d{1,3})\s+([0-9a-fA-F-]+)\s+(dynamic|static)$",
+            stripped,
+        )
+        if not device_match:
+            continue
+
+        ip_addr, mac_addr, entry_type = device_match.groups()
+        devices.append(
+            {
+                "ip": ip_addr,
+                "name": resolve_device_name(ip_addr),
+                "mac": mac_addr,
+                "type": entry_type,
+                "interface": current_interface or "unknown",
+                "configured": ip_addr == DEVICE_IP,
+            }
+        )
+
+    devices.sort(key=lambda item: (not item["configured"], item["ip"]))
+    return devices
+
+
+def print_wifi_network_devices(devices):
+    """Print the devices currently visible on the local network."""
+    print()
+    print("Devices currently visible on the local Wi-Fi network")
+    print("-" * 50)
+
+    if not devices:
+        print("No devices were found in the local ARP table.")
+        print()
+        return
+
+    for index, device in enumerate(devices, start=1):
+        configured_note = "Yes" if device["configured"] else "No"
+        print(f"{index}. IP address : {device['ip']}")
+        print(f"   Device name : {device['name']}")
+        print(f"   MAC address : {device['mac']}")
+        print(f"   Entry type : {device['type']}")
+        print(f"   Interface : {device['interface']}")
+        print(f"   Matches configured IP : {configured_note}")
+        print()
 
 
 def discover_wireless_devices():
@@ -122,6 +199,7 @@ def main():
         return
 
     print("Wireless debugging device scan starting...")
+    print_wifi_network_devices(list_wifi_network_devices())
     device_addr, addr_source = choose_device_addr()
     print("Connection details")
     print("-" * 18)
