@@ -1,14 +1,16 @@
 # Android Screen Mirror Launcher
 
-Small Windows Python scripts for launching `scrcpy` with either:
+Small Windows Python scripts for launching `scrcpy` over:
 
-- a USB-connected Android device
-- a wireless Android device using ADB Wireless Debugging
+- USB
+- Wireless Debugging
+- or both, through a simple launcher menu
 
-This repository contains two scripts:
+This repository contains three scripts:
 
-- `MirrorScreenC.py` for USB connections
-- `MirrorScreenW.py` for wireless connections
+- `MirrorScreenBoth.py` - launcher with USB / Wireless menu
+- `MirrorScreenC.py` - USB mode
+- `MirrorScreenW.py` - Wireless mode
 
 ## Requirements
 
@@ -75,6 +77,16 @@ Typical path on Android:
 
 ## Files
 
+### `MirrorScreenBoth.py`
+
+Use this as the main entry point.
+
+What it does:
+
+1. Shows a simple launcher menu
+2. Lets you choose `USB` or `Wireless`
+3. Returns you to the main menu after each mode finishes
+
 ### `MirrorScreenC.py`
 
 Use this script when your phone is connected with a USB cable.
@@ -82,9 +94,9 @@ Use this script when your phone is connected with a USB cable.
 What it does:
 
 1. Disconnects existing ADB TCP/IP connections
-2. Checks connected ADB devices
-3. Picks the first USB device it finds
-4. Starts `scrcpy`
+2. Checks connected USB devices
+3. Lets you choose one or more USB devices if multiple are connected
+4. Launches `scrcpy` for each selected device
 
 ### `MirrorScreenW.py`
 
@@ -92,20 +104,36 @@ Use this script when you want to connect over Wi-Fi.
 
 What it does:
 
-1. Shows devices currently visible on the local Wi-Fi network
-2. Shows Android devices that advertise Wireless Debugging through ADB mDNS
-3. Lets you choose a wireless device if multiple are found
+1. Finds Android devices that advertise Wireless Debugging through ADB mDNS
+2. Lets you choose one or more wireless devices if multiple are found
+3. Supports manual wireless pairing when connect fails
 4. Connects with `adb connect`
-5. Starts `scrcpy`
+5. Launches `scrcpy` for each selected device
 
 ## How To Use
+
+## Recommended Launcher
+
+Run the main launcher:
+
+```bash
+py -3 MirrorScreenBoth.py
+```
+
+It gives you:
+
+- `1. USB`
+- `2. Wireless`
+- `3. Exit`
+
+You can choose Wireless even if the same device is connected by cable.
 
 ## USB Mode
 
 1. Connect your phone with a USB cable
 2. Make sure `USB debugging` is enabled on the phone
 3. Accept the debugging authorization prompt on the phone if it appears
-4. Run:
+4. Run directly:
 
 ```bash
 py -3 MirrorScreenC.py
@@ -117,11 +145,16 @@ If Python is available as `python`, you can also run:
 python MirrorScreenC.py
 ```
 
+The script can launch:
+
+- one USB device
+- multiple USB devices in one selection, for example `1,2`
+
 ## Wireless Mode
 
 1. Make sure the phone and PC are on the same Wi-Fi network
 2. Enable `Wireless debugging` on the phone
-3. Run:
+3. Run directly:
 
 ```bash
 py -3 MirrorScreenW.py
@@ -129,10 +162,10 @@ py -3 MirrorScreenW.py
 
 The script will:
 
-- list visible devices on the local network
 - list Android devices that expose Wireless Debugging
-- ask you to choose a device if more than one is available
-- connect and open `scrcpy`
+- let you choose one device or multiple devices like `1,2`
+- support `pair` if the device is not already paired
+- connect and launch `scrcpy`
 
 ## Configuration
 
@@ -158,6 +191,7 @@ Because of that:
 - the wireless script tries to detect the current port automatically
 - automatic connection works best when the device is already paired with the PC
 - if Android asks for pairing again, you must pair the device again before `adb connect` can work
+- when pairing, use the `IP address & Port` shown in the lower `Pair with device` popup, not the one from the main Wireless debugging screen
 
 ## Troubleshooting
 
@@ -195,6 +229,7 @@ Check the following:
 2. `Wireless debugging` is enabled
 3. The device is already paired if Android requires pairing
 4. The phone is visible in ADB mDNS discovery
+5. If pairing is needed, open `Pair device with pairing code` on the phone before entering the pairing code and port
 
 ### No USB device found
 
@@ -206,7 +241,9 @@ Check the following:
 
 ## Summary
 
-- Use `MirrorScreenC.py` for USB mirroring
-- Use `MirrorScreenW.py` for wireless mirroring
+- Use `MirrorScreenBoth.py` as the main launcher
+- Use `MirrorScreenC.py` for USB mirroring only
+- Use `MirrorScreenW.py` for wireless mirroring only
 - Install Python, Android Platform Tools, and `scrcpy` first
 - Wireless mode depends on ADB discovery and Android Wireless Debugging behavior
+- USB and Wireless modes both support launching multiple devices

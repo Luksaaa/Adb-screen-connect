@@ -78,12 +78,6 @@ def choose_usb_device(usb_devices):
 
 def main():
     while True:
-        print("Press Enter to scan USB devices or type 'back' to return.")
-        choice = input("Action: ").strip().lower()
-        if choice == "back":
-            return
-
-        print()
         print("Disconnecting all TCP/IP connections...")
         run_command(["adb", "disconnect"])
 

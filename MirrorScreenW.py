@@ -387,11 +387,6 @@ def main():
             print(f"Using device address {device_addr} ({addr_source}: {selected_device['service']}).")
 
             print()
-            print("Disconnecting all connections...")
-            code, out, err = run_command([ADB_PATH, "disconnect"], timeout=5)
-            # No special handling is needed here.
-
-            print()
             print(f"Trying to connect to the device at {device_addr}...")
             code, out, err = run_command([ADB_PATH, "connect", device_addr], timeout=10)
 
