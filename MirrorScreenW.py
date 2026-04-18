@@ -30,6 +30,15 @@ def run_command(cmd, timeout=None):
         return 1, "", "Command timed out"
 
 
+def start_scrcpy(device_addr):
+    """Start scrcpy without blocking the script."""
+    try:
+        subprocess.Popen([SCRCPY_PATH, "-s", device_addr], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True, ""
+    except OSError as exc:
+        return False, str(exc)
+
+
 def show_loading(label, step):
     """Show a lightweight inline loading indicator."""
     dots = "." * ((step % 3) + 1)
@@ -170,8 +179,27 @@ def normalize_pairing_addr(value, default_ip):
     return value
 
 
+def parse_selection_list(value, max_index):
+    """Parse a comma-separated list of numeric selections."""
+    parts = [part.strip() for part in value.split(",") if part.strip()]
+    if not parts:
+        return None
+
+    indexes = []
+    for part in parts:
+        if not part.isdigit():
+            return None
+        selected_index = int(part)
+        if not 1 <= selected_index <= max_index:
+            return None
+        if selected_index not in indexes:
+            indexes.append(selected_index)
+
+    return indexes
+
+
 def choose_device_addr():
-    """Choose the device address to use for connection."""
+    """Choose one or more device addresses to use for connection."""
     configured_addr = f"{DEVICE_IP}:{DEVICE_PORT}" if DEVICE_PORT else None
     while True:
         os.system("cls")
@@ -181,48 +209,68 @@ def choose_device_addr():
         print_discovered_devices(discovered)
 
         if discovered:
-            print("Choose a device number, type 'cls' to refresh, or type 'pair' for wireless pairing.")
+            print("Choose device numbers like '1' or '1,2', type 'cls' to refresh, type 'pair' for wireless pairing, or type 'back' to return.")
+            print()
 
             while True:
                 choice = input("Select a device number: ").strip().lower()
                 if choice == "cls":
                     break
+                if choice == "back":
+                    return None, None
                 if choice == "pair":
                     paired_ok, _ = run_pairing_flow(DEVICE_IP, f"{DEVICE_IP}:5555")
                     if paired_ok:
                         break
                     continue
-                if choice.isdigit():
-                    selected_index = int(choice)
-                    if 1 <= selected_index <= len(discovered):
-                        device = discovered[selected_index - 1]
-                        return device["addr"], f"mDNS selection ({device['service']})"
+                selected_indexes = parse_selection_list(choice, len(discovered))
+                if selected_indexes:
+                    selected_devices = [discovered[selected_index - 1] for selected_index in selected_indexes]
+                    return selected_devices, "mDNS selection"
 
-                print("Invalid selection. Enter a listed number, 'cls', or 'pair'.")
+                print("Invalid selection. Enter listed numbers, 'cls', 'pair', or 'back'.")
 
             continue
 
         print("No wireless debugging devices were discovered.")
-        print("Type 'cls' to refresh or 'pair' for wireless pairing.")
+        print("Type 'cls' to refresh, 'pair' for wireless pairing, or 'back' to return.")
+        print()
         choice = input("Action: ").strip().lower()
         if choice == "cls":
             continue
+        if choice == "back":
+            return None, None
         if choice == "pair":
             run_pairing_flow(DEVICE_IP, f"{DEVICE_IP}:5555")
             continue
 
         if configured_addr:
             print(f"Using configured fallback address: {configured_addr}")
-            return configured_addr, "configured fallback port"
+            return [{"addr": configured_addr, "service": configured_addr, "preferred": True}], "configured fallback port"
 
         print(f"Using default fallback address: {DEVICE_IP}:5555")
-        return f"{DEVICE_IP}:5555", "default port fallback"
+        return [{"addr": f"{DEVICE_IP}:5555", "service": f"{DEVICE_IP}:5555", "preferred": True}], "default port fallback"
 
 
 def ask_to_retry():
     """Ask the user whether to run the wireless flow again."""
     while True:
+        print()
         choice = input("Run again? (y/n): ").strip().lower()
+        if choice == "cls":
+            os.system("cls")
+            continue
+        if choice in {"y", "n"}:
+            return choice == "y"
+
+        print("Invalid input. Enter 'y', 'n', or 'cls'.")
+
+
+def ask_to_launch_again():
+    """Ask whether to launch another wireless device."""
+    while True:
+        print()
+        choice = input("Launch another wireless device? (y/n): ").strip().lower()
         if choice == "cls":
             os.system("cls")
             continue
@@ -235,7 +283,12 @@ def ask_to_retry():
 def run_pairing_flow(default_ip, current_addr):
     """Run wireless pairing flow for first-time wireless setup."""
     print()
-    print("Open 'Pair device with pairing code' on the phone before continuing.")
+    print("Pairing instructions")
+    print("--------------------")
+    print("1. On the phone, open 'Pair device with pairing code'.")
+    print("2. Look at the lower 'Pair with device' popup.")
+    print("3. Use the IP address and port shown there.")
+    print("4. Do not use the IP address & Port shown on the main Wireless debugging screen.")
     print()
 
     while True:
@@ -249,6 +302,7 @@ def run_pairing_flow(default_ip, current_addr):
         elif len(discovered) > 1:
             print("Multiple pairing devices are available.")
             print("Enter the number of the pairing device or type the pairing port / IP:port.")
+            print()
             choice = input("Pairing device: ").strip().lower()
             if choice == "cls":
                 os.system("cls")
@@ -316,84 +370,112 @@ def main():
         os.system("pause")
         return
 
+    print("Tip: if the device is not already paired with this PC, open 'Pair device with pairing code' on the phone now for faster wireless setup.")
+    print()
+
     while True:
-        device_addr, addr_source = choose_device_addr()
-        print("Connection details")
-        print("-" * 18)
-        print(f"Using device address {device_addr} ({addr_source}).")
-
-        print("Disconnecting all connections...")
-        code, out, err = run_command([ADB_PATH, "disconnect"], timeout=5)
-        # No special handling is needed here.
-
-        print(f"Trying to connect to the device at {device_addr}...")
-        code, out, err = run_command([ADB_PATH, "connect", device_addr], timeout=10)
-
-        # ADB reports success in multiple ways: "connected to ..." or "already connected to ...".
-        out_low = (out or "").lower()
-        err_low = (err or "").lower()
-        connected_ok = (
-            code == 0
-            and (
-                "connected to" in out_low
-                or "already connected to" in out_low
-                or "connected to" in err_low
-                or "already connected to" in err_low
-            )
-        )
-
-        if not connected_ok:
-            print()
-            print("Connection error:")
-            if out:
-                print("   Output:", out)
-            if err:
-                print("   Error:", err)
-
-            # A few common hints.
-            if "unable to connect" in out_low or "failed to connect" in out_low:
-                print("Check the IP/port (Wireless debugging on the phone) and make sure the PC and phone are on the same network.")
-            if "unauthorized" in out_low:
-                print("Confirm 'Allow USB/Wireless debugging' on the phone.")
-            if "10061" in out_low or "cannot connect" in out_low:
-                print("The wireless debugging port may have changed. Open Wireless debugging on the phone and run the script again.")
-
-            paired_ok, paired_addr = run_pairing_flow(device_addr.split(":", 1)[0], device_addr)
-            if paired_ok:
-                device_addr = paired_addr
-                continue
-
-            if ask_to_retry():
-                continue
-
-            os.system("pause")
+        selected_devices, addr_source = choose_device_addr()
+        if not selected_devices:
             return
 
-        print(f"Connected device: {device_addr}")
+        restart_selection = False
+        for selected_device in selected_devices:
+            device_addr = selected_device["addr"]
 
-        print("Starting scrcpy...")
-        code, out, err = run_command([SCRCPY_PATH, "-s", device_addr])
+            print("Connection details")
+            print("-" * 18)
+            print(f"Using device address {device_addr} ({addr_source}: {selected_device['service']}).")
 
-        if code != 0:
-            print("Error while starting scrcpy:")
-            if out:
-                print("   Output:", out)
-            if err:
-                print("   Error:", err)
+            print()
+            print("Disconnecting all connections...")
+            code, out, err = run_command([ADB_PATH, "disconnect"], timeout=5)
+            # No special handling is needed here.
 
-            # Common messages.
-            low = (out + "\n" + err).lower()
-            if "no devices/emulators found" in low:
-                print("ADB cannot see the device. Try 'adb devices' manually and check that it says 'device', not 'unauthorized' or 'offline'.")
-            elif "not recognized" in low or "no such file" in low:
-                print("scrcpy is not in PATH. Enter the full path in SCRCPY_PATH.")
+            print()
+            print(f"Trying to connect to the device at {device_addr}...")
+            code, out, err = run_command([ADB_PATH, "connect", device_addr], timeout=10)
 
-            if ask_to_retry():
-                continue
-        else:
-            print("scrcpy finished.")
-            if ask_to_retry():
-                continue
+            # ADB reports success in multiple ways: "connected to ..." or "already connected to ...".
+            out_low = (out or "").lower()
+            err_low = (err or "").lower()
+            connected_ok = (
+                code == 0
+                and (
+                    "connected to" in out_low
+                    or "already connected to" in out_low
+                    or "connected to" in err_low
+                    or "already connected to" in err_low
+                )
+            )
+
+            if not connected_ok:
+                print()
+                print("Connection error:")
+                if out:
+                    print("   Output:", out)
+                if err:
+                    print("   Error:", err)
+
+                if "unable to connect" in out_low or "failed to connect" in out_low:
+                    print("Check the IP/port (Wireless debugging on the phone) and make sure the PC and phone are on the same network.")
+                if "unauthorized" in out_low:
+                    print("Confirm 'Allow USB/Wireless debugging' on the phone.")
+                if "10061" in out_low or "cannot connect" in out_low:
+                    print("The wireless debugging port may have changed. Open Wireless debugging on the phone and run the script again.")
+
+                paired_ok, paired_addr = run_pairing_flow(device_addr.split(":", 1)[0], device_addr)
+                if paired_ok:
+                    device_addr = paired_addr
+                    print()
+                    print(f"Trying to connect to the device at {device_addr}...")
+                    code, out, err = run_command([ADB_PATH, "connect", device_addr], timeout=10)
+                    out_low = (out or "").lower()
+                    err_low = (err or "").lower()
+                    connected_ok = (
+                        code == 0
+                        and (
+                            "connected to" in out_low
+                            or "already connected to" in out_low
+                            or "connected to" in err_low
+                            or "already connected to" in err_low
+                        )
+                    )
+
+                if not connected_ok:
+                    if ask_to_retry():
+                        restart_selection = True
+                        break
+
+                    os.system("pause")
+                    return
+
+            print(f"Connected device: {device_addr}")
+
+            print()
+            print("Starting scrcpy...")
+            started, error = start_scrcpy(device_addr)
+
+            if not started:
+                print()
+                print("Error while starting scrcpy:")
+                print("   Error:", error)
+
+                if ask_to_retry():
+                    restart_selection = True
+                    break
+
+                os.system("pause")
+                return
+
+            print()
+            print("scrcpy launched.")
+            print()
+
+        if restart_selection:
+            continue
+
+        if ask_to_launch_again():
+            continue
 
         break
 
